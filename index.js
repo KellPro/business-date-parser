@@ -1,5 +1,21 @@
+const Temporal = globalThis.Temporal;
+
+if (!Temporal) {
+  throw new Error('Temporal is not defined. Please install @js-temporal/polyfill to globalThis.Temporal or use a runtime that supports Temporal.');
+}
+
+function resolveTimeZone(options) {
+  return options?.timeZone || Temporal.Now.timeZoneId();
+}
+
+function normalizeOffset(offset) {
+  if (offset.length === 3) return offset + ':00';
+  if (offset.length === 5) return offset.substring(0, 3) + ':' + offset.substring(3);
+  return offset;
+}
+
 function calculateFullYear(input) {
-  const currentYear = (new Date()).getFullYear().toString();
+  const currentYear = Temporal.Now.plainDateISO().year.toString();
   const currentShortPrefix = parseInt(currentYear.substring(0, 2), 10);
   const currentShortSuffix = parseInt(currentYear.substring(2), 10);
   const inputAsInt = parseInt(input, 10);
@@ -7,21 +23,33 @@ function calculateFullYear(input) {
   return `${prefix}${input}`;
 }
 
-function systemParseDate(input) {
+function systemParseDate(input, timeZone) {
   let parsed = new Date(input);
   if (isDate(parsed)) {
-    return parsed;
+    return dateToZonedDateTime(parsed, timeZone);
   } else {
     parsed = Date.parse(input);
     if (Number.isInteger(parsed)) {
-      return new Date(parsed);
+      return dateToZonedDateTime(new Date(parsed), timeZone);
     }
   }
   return null;
 }
 
+function dateToZonedDateTime(legacyDate, timeZone) {
+  return Temporal.Instant.fromEpochMilliseconds(legacyDate.getTime()).toZonedDateTimeISO(timeZone);
+}
+
+function zonedDateTimeToDate(zonedDateTime) {
+  return new Date(zonedDateTime.epochMilliseconds);
+}
+
 function isDate(input) {
   return input instanceof Date && !isNaN(input.valueOf());
+}
+
+function isZonedDateTime(input) {
+  return input instanceof Temporal.ZonedDateTime;
 }
 
 function isTimeStamp(input) {
@@ -75,8 +103,16 @@ function adjustForMeridiem(hours, meridiem) {
 }
 
 function limitDayToLastOfMonth(year, month, day) {
-  const last = new Date(year, month + 1, 0);
-  return Math.min(day, last.getDate());
+  const lastDay = new Temporal.PlainYearMonth(parseInt(year, 10), parseInt(month, 10)).daysInMonth;
+  return Math.min(day, lastDay);
+}
+
+function nowZoned(timeZone) {
+  return Temporal.Now.zonedDateTimeISO(timeZone);
+}
+
+function startOfDay(zonedDateTime) {
+  return zonedDateTime.startOfDay();
 }
 
 function testForMatches(input = '', userRules = [], systemRules = [], userRejectRules = [], systemRejectRules = []) {
@@ -94,13 +130,19 @@ function testForMatches(input = '', userRules = [], systemRules = [], userReject
   return null;
 }
 
-export function parseDateAndTime(input, options = {rules: [], reject: [], preferTime: false, defaultDate: null}) {
-  if (isDate(input)) {
+export function parseZonedDateAndTime(input, options = {rules: [], reject: [], preferTime: false, defaultDate: null}) {
+  const timeZone = resolveTimeZone(options);
+
+  if (isZonedDateTime(input)) {
     return input;
   }
 
+  if (isDate(input)) {
+    return dateToZonedDateTime(input, timeZone);
+  }
+
   if (isTimeStamp(input)) {
-    return new Date(input);
+    return Temporal.Instant.fromEpochMilliseconds(input).toZonedDateTimeISO(timeZone);
   }
 
   if (isNotValid(input)) {
@@ -113,14 +155,31 @@ export function parseDateAndTime(input, options = {rules: [], reject: [], prefer
     {
       regex: /^c$/i,
       parse: () => {
-        return new Date();
+        return nowZoned(timeZone);
+      }
+    },
+    {
+      regex: /^\d{4}-\d{2}-\d{2}T.+$/,
+      parse: (matches, input) => {
+        try {
+          return Temporal.Instant.from(input).toZonedDateTimeISO(timeZone);
+        } catch {
+          return systemParseDate(input, timeZone);
+        }
+      }
+    },
+    {
+      regex: /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s*(Z|[+-]\d{2,4})$/i,
+      parse: (matches) => {
+        const offset = matches[3].toUpperCase() === 'Z' ? '+00:00' : normalizeOffset(matches[3]);
+        return Temporal.Instant.from(`${matches[1]}T${matches[2]}${offset}`).toZonedDateTimeISO(timeZone);
       }
     }
   ];
 
   const ruleResult = testForMatches(input, options.rules, parseRules, options.reject);
-  if (isDate(ruleResult)) {
-    return ruleResult;
+  if (isZonedDateTime(ruleResult) || isDate(ruleResult)) {
+    return isDate(ruleResult) ? dateToZonedDateTime(ruleResult, timeZone) : ruleResult;
   }
 
   const parts = input.replace(/  +/g, ' ').split(' ');
@@ -134,37 +193,59 @@ export function parseDateAndTime(input, options = {rules: [], reject: [], prefer
   }
 
   if (options.preferTime && !isLikelyDateFormat(input)) {
-    const likelyTime = parseTime(input, options);
-    if (isDate(likelyTime)) {
-      datePart = options.defaultDate || new Date();
+    const likelyTime = parseZonedTime(input, options);
+    if (isZonedDateTime(likelyTime)) {
+      if (options.defaultDate) {
+        datePart = options.defaultDate;
+      } else {
+        datePart = null;
+      }
       timePart = likelyTime;
     }
   }
 
-  let parsedDate = parseDate(datePart, options);
-  if (!parsedDate) {
-    const likelyTime = parseTime(input, options);
-    if (isDate(likelyTime)) {
-      parsedDate = new Date();
+  let parsedDate = datePart !== null ? parseZonedDate(datePart, options) : null;
+  if (!parsedDate && !isZonedDateTime(timePart)) {
+    const likelyTime = parseZonedTime(input, options);
+    if (isZonedDateTime(likelyTime)) {
+      parsedDate = startOfDay(nowZoned(timeZone));
       timePart = likelyTime;
     }
   }
 
-  const parsedTime = parseTime(timePart, options);
+  // If datePart was null (preferTime with no defaultDate), use today
+  if (!parsedDate && isZonedDateTime(timePart)) {
+    parsedDate = startOfDay(nowZoned(timeZone));
+  }
+
+  const parsedTime = isZonedDateTime(timePart) ? timePart : parseZonedTime(timePart, options);
   if (parsedDate && parsedTime) {
-    parsedDate.setHours(parsedTime.getHours(), parsedTime.getMinutes(), parsedTime.getSeconds(), parsedTime.getMilliseconds());
+    return parsedDate.with({
+      hour: parsedTime.hour,
+      minute: parsedTime.minute,
+      second: parsedTime.second,
+      millisecond: parsedTime.millisecond,
+      microsecond: 0,
+      nanosecond: 0
+    });
   }
 
   return parsedDate;
 }
 
-export function parseDate(input, options = {rules: [], reject: []}) {
-  if (isDate(input)) {
+export function parseZonedDate(input, options = {rules: [], reject: []}) {
+  const timeZone = resolveTimeZone(options);
+
+  if (isZonedDateTime(input)) {
     return input;
   }
 
+  if (isDate(input)) {
+    return dateToZonedDateTime(input, timeZone);
+  }
+
   if (isTimeStamp(input)) {
-    return new Date(input);
+    return Temporal.Instant.fromEpochMilliseconds(input).toZonedDateTimeISO(timeZone);
   }
 
   if (isNotValid(input)) {
@@ -177,82 +258,63 @@ export function parseDate(input, options = {rules: [], reject: []}) {
     {
       regex: /^c$/i,
       parse: () => {
-        return new Date();
+        return startOfDay(nowZoned(timeZone));
       }
     },
     {
       regex: /^t$/i,
       parse: () => {
-        const date = new Date();
-        date.setDate(date.getDate() + 1);
-        date.setHours(0, 0, 0, 0);
-        return date;
+        return startOfDay(nowZoned(timeZone).add({days: 1}));
       }
     },
     {
       regex: /^y$/i,
       parse: () => {
-        const date = new Date();
-        date.setDate(date.getDate() - 1);
-        date.setHours(0, 0, 0, 0);
-        return date;
+        return startOfDay(nowZoned(timeZone).subtract({days: 1}));
       }
     },
     {
       regex: /^f$/i,
       parse: () => {
-        const date = new Date();
-        date.setDate(1);
-        date.setHours(0, 0, 0, 0);
-        return date;
+        return startOfDay(nowZoned(timeZone).with({day: 1}));
       }
     },
     {
       regex: /^l$/i,
       parse: () => {
-        const date = new Date();
-        date.setDate(new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate());
-        date.setHours(0, 0, 0, 0);
-        return date;
+        const now = nowZoned(timeZone);
+        return startOfDay(now.with({day: now.daysInMonth}));
       }
     },
     {
       regex: /^\+(\d+)/, // +#
       parse: (matches) => {
-        const date = new Date();
-        date.setDate(date.getDate() + parseInt(matches[1], 10));
-        date.setHours(0, 0, 0, 0);
-        return date;
+        return startOfDay(nowZoned(timeZone).add({days: parseInt(matches[1], 10)}));
       }
     },
     {
       regex: /^-(\d+)/, // -#
       parse: (matches) => {
-        const date = new Date();
-        date.setDate(date.getDate() - parseInt(matches[1], 10));
-        date.setHours(0, 0, 0, 0);
-        return date;
+        return startOfDay(nowZoned(timeZone).subtract({days: parseInt(matches[1], 10)}));
       }
     },
     {
       regex: /^(\d{1,2})$/, // DD
       parse: (matches) => {
-        const date = new Date();
+        const now = nowZoned(timeZone);
         const parsedDay = parseInt(matches[1], 10);
-        date.setDate(limitDayToLastOfMonth(date.getFullYear(), date.getMonth(), parsedDay));
-        date.setHours(0, 0, 0, 0);
-        return date;
+        const clampedDay = limitDayToLastOfMonth(now.year, now.month, parsedDay);
+        return startOfDay(now.with({day: clampedDay}));
       }
     },
     {
       regex: /^(\d{1,2})[\/\\\-.,;](\d{1,2})?$/, // MM/ or MM/DD
-      parse: (matches, input) => {
-        const date = new Date();
-        const parsedMonth = parseInt(matches[1], 10) - 1;
+      parse: (matches) => {
+        const now = nowZoned(timeZone);
+        const parsedMonth = parseInt(matches[1], 10);
         const parsedDay = parseInt(matches[2] || 1, 10);
-        date.setMonth(parsedMonth, limitDayToLastOfMonth(date.getFullYear(), parsedMonth, parsedDay));
-        date.setHours(0, 0, 0, 0);
-        return date;
+        const clampedDay = limitDayToLastOfMonth(now.year, parsedMonth, parsedDay);
+        return startOfDay(now.with({month: parsedMonth, day: clampedDay}));
       }
     },
     {
@@ -263,27 +325,23 @@ export function parseDate(input, options = {rules: [], reject: []}) {
           year = calculateFullYear(year);
         }
 
-        const date = new Date();
-        if (year) {
-          date.setFullYear(parseInt(year, 10));
-        }
-        const parsedMonth = parseInt(matches[1], 10) - 1;
+        const now = nowZoned(timeZone);
+        const resolvedYear = year ? parseInt(year, 10) : now.year;
+        const parsedMonth = parseInt(matches[1], 10);
         const parsedDay = parseInt(matches[2], 10);
-        date.setMonth(parsedMonth, limitDayToLastOfMonth(year || date.getFullYear(), parsedMonth, parsedDay));
-        date.setHours(0, 0, 0, 0);
-        return date;
+        const clampedDay = limitDayToLastOfMonth(resolvedYear, parsedMonth, parsedDay);
+        return startOfDay(now.with({year: resolvedYear, month: parsedMonth, day: clampedDay}));
       }
     },
     {
       regex: /^(\d{4})[\/\\\-.,;](\d{1,2})[\/\\\-.,;](\d{1,2})$/, // YYYY-MM-DD
       parse: (matches) => {
-        const date = new Date();
         const parsedYear = parseInt(matches[1], 10);
-        const parsedMonth = parseInt(matches[2], 10) - 1;
+        const parsedMonth = parseInt(matches[2], 10);
         const parsedDay = parseInt(matches[3], 10);
-        date.setFullYear(parsedYear, parsedMonth, limitDayToLastOfMonth(parsedYear, parsedMonth, parsedDay));
-        date.setHours(0, 0, 0, 0);
-        return date;
+        const clampedDay = limitDayToLastOfMonth(parsedYear, parsedMonth, parsedDay);
+        return Temporal.PlainDate.from({year: parsedYear, month: parsedMonth, day: clampedDay})
+          .toZonedDateTime(timeZone);
       }
     },
     {
@@ -307,31 +365,40 @@ export function parseDate(input, options = {rules: [], reject: []}) {
           month = parseInt(input.substring(2, 4), 10);
           day = parseInt(input.substring(0, 2), 10);
         }
-        
-        const date = new Date();
-        date.setFullYear(year, month - 1, limitDayToLastOfMonth(year, month - 1, day));
-        date.setHours(0, 0, 0, 0);
-        return date;
+
+        const clampedDay = limitDayToLastOfMonth(year, month, day);
+        return Temporal.PlainDate.from({year, month, day: clampedDay})
+          .toZonedDateTime(timeZone);
       }
     },
     {
       regex: /.*/,
       parse: (matches, input) => {
-        return systemParseDate(input);
+        return systemParseDate(input, timeZone);
       }
     }
   ];
 
-  return testForMatches(input, options.rules, parseRules, options.reject);
+  const result = testForMatches(input, options.rules, parseRules, options.reject);
+  if (isDate(result)) {
+    return dateToZonedDateTime(result, timeZone);
+  }
+  return result;
 }
 
-export function parseTime(input, options = {rules: [], reject: []}) {
-  if (isDate(input)) {
+export function parseZonedTime(input, options = {rules: [], reject: []}) {
+  const timeZone = resolveTimeZone(options);
+
+  if (isZonedDateTime(input)) {
     return input;
   }
 
+  if (isDate(input)) {
+    return dateToZonedDateTime(input, timeZone);
+  }
+
   if (isTimeStamp(input)) {
-    return new Date(input);
+    return Temporal.Instant.fromEpochMilliseconds(input).toZonedDateTimeISO(timeZone);
   }
 
   if (isNotValid(input)) {
@@ -348,23 +415,23 @@ export function parseTime(input, options = {rules: [], reject: []}) {
     {
       regex: /^c$/i,
       parse: () => {
-        return new Date();
+        return nowZoned(timeZone);
       }
     },
     {
       regex: /^-(\d+)/, // -#
       parse: (matches) => {
-        const date = new Date();
-        date.setMinutes(date.getMinutes() - parseInt(matches[1], 10), 0, 0);
-        return date;
+        const now = nowZoned(timeZone);
+        return now.subtract({minutes: parseInt(matches[1], 10)})
+          .with({second: 0, millisecond: 0, microsecond: 0, nanosecond: 0});
       }
     },
     {
       regex: /^\+(\d+)/, // +#
       parse: (matches) => {
-        const date = new Date();
-        date.setMinutes(date.getMinutes() + parseInt(matches[1], 10), 0, 0);
-        return date;
+        const now = nowZoned(timeZone);
+        return now.add({minutes: parseInt(matches[1], 10)})
+          .with({second: 0, millisecond: 0, microsecond: 0, nanosecond: 0});
       }
     },
     {
@@ -390,34 +457,82 @@ export function parseTime(input, options = {rules: [], reject: []}) {
 
         hour = adjustForMeridiem(hour, meridiem);
 
-        const date = new Date();
-        date.setHours(hour, minutes, 0, 0);
-        return date;
+        return startOfDay(nowZoned(timeZone)).with({
+          hour: parseInt(hour, 10),
+          minute: parseInt(minutes, 10),
+          second: 0,
+          millisecond: 0,
+          microsecond: 0,
+          nanosecond: 0
+        });
       }
     },
     {
       regex: /^(\d{2}):(\d{2}):(\d{2})([.]\d{1,3})?([-+]\d{1,4})$/, // ISO 8601 Time Part
-      parse: (matches, input) => {
-        return systemParseDate(`${new Date().toISOString().substring(0, 10)} ${input}`);
+      parse: (matches) => {
+        const today = Temporal.Now.plainDateISO().toString();
+        let offset = matches[5];
+        if (offset.length === 3) {
+          offset += ':00';
+        } else if (offset.length === 5) {
+          offset = offset.substring(0, 3) + ':' + offset.substring(3);
+        }
+        const instant = Temporal.Instant.from(`${today}T${matches[1]}:${matches[2]}:${matches[3]}${matches[4] || ''}${offset}`);
+        return instant.toZonedDateTimeISO(timeZone);
       }
     },
     {
       regex: /^(\d{1,2})[:.,;\-]?(\d{1,2})?[:.,;\-]?(\d{1,2})?[:.,;\-]?(\d{1,3})?[:.,;\-]?\s*([ap](?=m|^\w|$))?/i,
       parse: (matches) => {
         let hours = matches[1];
-        const minutes = matches[2] || 0;
-        const seconds = matches[3] || 0;
-        const milliseconds = matches[4] || 0;
+        const minutes = parseInt(matches[2] || 0, 10);
+        const seconds = parseInt(matches[3] || 0, 10);
+        const milliseconds = parseInt(matches[4] || 0, 10);
         const meridiem = matches[5];
 
         hours = adjustForMeridiem(hours, meridiem);
 
-        const date = new Date();
-        date.setHours(hours, minutes, seconds, milliseconds);
-        return date;
+        return startOfDay(nowZoned(timeZone)).with({
+          hour: parseInt(hours, 10),
+          minute: minutes,
+          second: seconds,
+          millisecond: milliseconds,
+          microsecond: 0,
+          nanosecond: 0
+        });
       }
     }
   ];
 
-  return testForMatches(input, options.rules, parseRules, options.reject, rejectRules);
+  const result = testForMatches(input, options.rules, parseRules, options.reject, rejectRules);
+  if (isDate(result)) {
+    return dateToZonedDateTime(result, timeZone);
+  }
+  return result;
+}
+
+// Legacy Date wrappers — thin conversions over the ZonedDateTime API
+
+export function parseDateAndTime(input, options) {
+  const result = parseZonedDateAndTime(input, options);
+  if (isZonedDateTime(result)) {
+    return zonedDateTimeToDate(result);
+  }
+  return result;
+}
+
+export function parseDate(input, options) {
+  const result = parseZonedDate(input, options);
+  if (isZonedDateTime(result)) {
+    return zonedDateTimeToDate(result);
+  }
+  return result;
+}
+
+export function parseTime(input, options) {
+  const result = parseZonedTime(input, options);
+  if (isZonedDateTime(result)) {
+    return zonedDateTimeToDate(result);
+  }
+  return result;
 }

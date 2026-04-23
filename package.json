@@ -7,6 +7,14 @@
   "scripts": {
     "test": "ava"
   },
+  "ava": {
+    "files": [
+      "tests/**/*.test.js"
+    ],
+    "require": [
+      "./tests/setup.js"
+    ]
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/beauwest/business-date-parser.git"
@@ -25,6 +33,7 @@
   },
   "homepage": "https://github.com/beauwest/business-date-parser#readme",
   "devDependencies": {
-    "ava": "^3.12.1"
+    "ava": "^3.12.1",
+    "@js-temporal/polyfill": "^0.5.1"
   }
 }
