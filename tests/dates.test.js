@@ -342,6 +342,18 @@ test('time: 22:00:00.000 AST', t => {
   expectTime(t, t.title, 22, 0, 0, 0);
 });
 
+test('time: 12:00:00.000 America/Chicago', t => {
+  expectTime(t, t.title, 12, 0, 0, 0);
+});
+
+test('time: 12:00:00.000 AM', t => {
+  expectTime(t, t.title, 0, 0, 0, 0);
+});
+
+test('time: 2:00 America/Chicago', t => {
+  expectTime(t, t.title, 14, 0, 0, 0);
+});
+
 test('time: bad value', t => {
   const result = parseTime('bad value');
   t.falsy(result);
@@ -485,6 +497,14 @@ test('datetime: 2022-02-01 13:00:00.000 PDT', t => {
 
 test('datetime: 2022-02-01 12:00:00.000 Z', t => {
   expectDateAndTimeISO(t, t.title, '2022-02-01T12:00:00.000Z');
+});
+
+test('datetime: 2022-02-01 12:00:00.000 America/Chicago', t => {
+  expectDateAndTime(t, t.title, 2022, 2, 1, 12);
+});
+
+test('datetime: 2022-02-01 12:00:00.000 AM', t => {
+  expectDateAndTime(t, t.title, 2022, 2, 1, 0);
 });
 
 test('datetime: 2022-02-01T19:00:00.000Z', t => {
@@ -678,6 +698,14 @@ test('zoned datetime: 2022-02-01 13:00:00.000 PDT', t => {
 test('zoned datetime: 2022-02-01 12:00:00.000 Z', t => {
   const result = parseZonedDateAndTime('2022-02-01 12:00:00.000 Z');
   t.is(result.epochMilliseconds, Date.UTC(2022, 1, 1, 12, 0, 0));
+});
+
+test('zoned datetime: 2022-02-01 12:00:00.000 America/Chicago', t => {
+  const result = parseZonedDateAndTime('2022-02-01 12:00:00.000 America/Chicago');
+  t.is(result.year, 2022);
+  t.is(result.month, 2);
+  t.is(result.day, 1);
+  t.is(result.hour, 12);
 });
 
 test('zoned datetime: 2022-02-01T19:00:00.000Z', t => {
@@ -914,6 +942,13 @@ test('zoned time: 08:22:34.028', t => {
   t.is(result.minute, 22);
   t.is(result.second, 34);
   t.is(result.millisecond, 28);
+});
+
+test('zoned time: 12:00:00.000 America/Chicago', t => {
+  const result = parseZonedTime('12:00:00.000 America/Chicago');
+  t.is(result.hour, 12);
+  t.is(result.minute, 0);
+  t.is(result.second, 0);
 });
 
 test('zoned time: rejects date-like strings', t => {

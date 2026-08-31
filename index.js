@@ -73,7 +73,7 @@ function isLikelyISOFormat(input) {
       return true;
     }
     // See if it ends in a timezone, or offset.
-    if (/([A-Z]{1,5})|([+-]\d{1,4})$/.test(input)) {
+    if (/([A-Z]{1,5}|[+-]\d{1,4})$/.test(input)) {
       return true;
     }
   }
@@ -482,7 +482,7 @@ export function parseZonedTime(input, options = {rules: [], reject: []}) {
       }
     },
     {
-      regex: /^(\d{1,2})[:.,;\-]?(\d{1,2})?[:.,;\-]?(\d{1,2})?[:.,;\-]?(\d{1,3})?[:.,;\-]?\s*([ap](?=m|^\w|$))?/i,
+      regex: /^(\d{1,2})[:.,;\-]?(\d{1,2})?[:.,;\-]?(\d{1,2})?[:.,;\-]?(\d{1,3})?[:.,;\-]?\s*([ap](?=m\b|$))?/i,
       parse: (matches) => {
         let hours = matches[1];
         const minutes = parseInt(matches[2] || 0, 10);
