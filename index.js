@@ -482,7 +482,7 @@ export function parseZonedTime(input, options = {rules: [], reject: []}) {
       }
     },
     {
-      regex: /^(\d{1,2})[:.,;\-]?(\d{1,2})?[:.,;\-]?(\d{1,2})?[:.,;\-]?(\d{1,3})?[:.,;\-]?\s*([ap](?=m\b|$))?/i,
+      regex: /^(\d{1,2})[:.,;\-]?(\d{1,2})?[:.,;\-]?(\d{1,2})?[:.,;\-]?(\d{1,3})?[:.,;\-]?\s*([ap]m?(?=\s|$))?(?:\s+(?:[a-z]{2,5}|[a-z]+\/[a-z_]+))?$/i,
       parse: (matches) => {
         let hours = matches[1];
         const minutes = parseInt(matches[2] || 0, 10);

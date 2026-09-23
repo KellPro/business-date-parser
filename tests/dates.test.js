@@ -1,4 +1,5 @@
 import {parseDate, parseTime, parseDateAndTime, parseZonedDate, parseZonedTime, parseZonedDateAndTime} from '../index.js';
+import {Temporal} from '@js-temporal/polyfill';
 
 import {createRequire} from 'module';
 
@@ -965,5 +966,36 @@ test('zoned time: with timeZone option', t => {
 
 test('zoned time: bad value', t => {
   const result = parseZonedTime('bad value');
+  t.falsy(result);
+});
+
+// --- Regression: unparseable strings must return null, not the current time ---
+
+test('zoned time: 9x', t => {
+  const result = parseZonedTime('9x');
+  t.falsy(result);
+});
+
+test('zoned time: 9:30pm', t => {
+  const result = parseZonedTime('9:30pm');
+  t.true(result instanceof Temporal.ZonedDateTime);
+  t.is(result.hour, 21);
+  t.is(result.minute, 30);
+});
+
+test('zoned time: 9:30pm CST', t => {
+  const result = parseZonedTime('9:30pm CST');
+  t.true(result instanceof Temporal.ZonedDateTime);
+  t.is(result.hour, 21);
+  t.is(result.minute, 30);
+});
+
+test('zoned datetime: 9x', t => {
+  const result = parseZonedDateAndTime('9x');
+  t.falsy(result);
+});
+
+test('zoned datetime: 12:00:00x', t => {
+  const result = parseZonedDateAndTime('12:00:00x');
   t.falsy(result);
 });
