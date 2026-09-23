@@ -14,6 +14,25 @@ function normalizeOffset(offset) {
   return offset;
 }
 
+const abbreviationTimeZones = {
+  ADT: 'America/Halifax',
+  AST: 'America/Halifax',
+  CDT: 'America/Chicago',
+  CST: 'America/Chicago',
+  EDT: 'America/New_York',
+  EST: 'America/New_York',
+  MDT: 'America/Denver',
+  MST: 'America/Denver',
+  PDT: 'America/Los_Angeles',
+  PST: 'America/Los_Angeles',
+  AKDT: 'America/Anchorage',
+  AKST: 'America/Anchorage',
+  HDT: 'Pacific/Honolulu',
+  HST: 'Pacific/Honolulu',
+  GMT: 'UTC',
+  UTC: 'UTC'
+};
+
 function calculateFullYear(input) {
   const currentYear = Temporal.Now.plainDateISO().year.toString();
   const currentShortPrefix = parseInt(currentYear.substring(0, 2), 10);
@@ -159,6 +178,18 @@ export function parseZonedDateAndTime(input, options = {rules: [], reject: [], p
       }
     },
     {
+      // Must run before the ISO rule below: Temporal.Instant.from throws on bracket
+      // annotations, and that throw falls back to systemParseDate which drops the zone.
+      regex: /\[.+]$/,
+      parse: (matches, input) => {
+        try {
+          return Temporal.ZonedDateTime.from(input);
+        } catch {
+          return null;
+        }
+      }
+    },
+    {
       regex: /^\d{4}-\d{2}-\d{2}T.+$/,
       parse: (matches, input) => {
         try {
@@ -173,6 +204,35 @@ export function parseZonedDateAndTime(input, options = {rules: [], reject: [], p
       parse: (matches) => {
         const offset = matches[3].toUpperCase() === 'Z' ? '+00:00' : normalizeOffset(matches[3]);
         return Temporal.Instant.from(`${matches[1]}T${matches[2]}${offset}`).toZonedDateTimeISO(timeZone);
+      }
+    },
+    {
+      regex: /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+([A-Za-z]{1,5}|[A-Za-z][A-Za-z0-9_+\-/]*\/[A-Za-z0-9_+\-/]+)$/i,
+      parse: (matches, input) => {
+        const zoneToken = matches[3];
+        if (zoneToken.includes('/')) {
+          try {
+            return Temporal.ZonedDateTime.from(`${matches[1]}T${matches[2]}[${zoneToken}]`);
+          } catch {
+            return null;
+          }
+        }
+        const nativeDate = new Date(input);
+        if (isDate(nativeDate)) {
+          const strippedDate = new Date(input.slice(0, input.length - zoneToken.length).trimEnd());
+          if (!isDate(strippedDate) || nativeDate.getTime() !== strippedDate.getTime()) {
+            return dateToZonedDateTime(nativeDate, timeZone);
+          }
+        }
+        const ianaTimeZone = abbreviationTimeZones[zoneToken.toUpperCase()];
+        if (!ianaTimeZone) {
+          return null;
+        }
+        try {
+          return Temporal.ZonedDateTime.from(`${matches[1]}T${matches[2]}[${ianaTimeZone}]`);
+        } catch {
+          return null;
+        }
       }
     }
   ];

@@ -501,7 +501,7 @@ test('datetime: 2022-02-01 12:00:00.000 Z', t => {
 });
 
 test('datetime: 2022-02-01 12:00:00.000 America/Chicago', t => {
-  expectDateAndTime(t, t.title, 2022, 2, 1, 12);
+  expectDateAndTimeISO(t, t.title, '2022-02-01T18:00:00.000Z');
 });
 
 test('datetime: 2022-02-01 12:00:00.000 AM', t => {
@@ -998,4 +998,39 @@ test('zoned datetime: 9x', t => {
 test('zoned datetime: 12:00:00x', t => {
   const result = parseZonedDateAndTime('12:00:00x');
   t.falsy(result);
+});
+
+// --- System rules: RFC 9557 bracket suffix and textual zone tokens ---
+
+test('zoned datetime: RFC 9557 bracket round-trip', t => {
+  const original = Temporal.Now.zonedDateTimeISO('America/Chicago');
+  const result = parseZonedDateAndTime(original.toString());
+  t.true(result instanceof Temporal.ZonedDateTime);
+  t.is(result.epochMilliseconds, original.epochMilliseconds);
+  t.is(result.timeZoneId, original.timeZoneId);
+});
+
+test('zoned datetime: 2025-01-01 12:00:00.000 CST', t => {
+  const result = parseZonedDateAndTime('2025-01-01 12:00:00.000 CST');
+  t.true(result instanceof Temporal.ZonedDateTime);
+  t.is(result.epochMilliseconds, Date.UTC(2025, 0, 1, 18, 0, 0));
+});
+
+test('zoned datetime: 2025-01-01 12:00:00.000 America/Chicago', t => {
+  const result = parseZonedDateAndTime('2025-01-01 12:00:00.000 America/Chicago');
+  t.true(result instanceof Temporal.ZonedDateTime);
+  t.is(result.timeZoneId, 'America/Chicago');
+  t.is(result.offset, '-06:00');
+});
+
+test('zoned datetime: 2025-01-01 12:00:00.000 XYZ', t => {
+  const result = parseZonedDateAndTime('2025-01-01 12:00:00.000 XYZ');
+  t.falsy(result);
+});
+
+test('zoned datetime: 2025-01-01T12:00:00-06:00[America/Chicago]', t => {
+  const result = parseZonedDateAndTime('2025-01-01T12:00:00-06:00[America/Chicago]', {timeZone: 'UTC'});
+  t.true(result instanceof Temporal.ZonedDateTime);
+  t.is(result.timeZoneId, 'America/Chicago');
+  t.is(result.epochMilliseconds, Date.UTC(2025, 0, 1, 18, 0, 0));
 });
