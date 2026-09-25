@@ -1034,3 +1034,59 @@ test('zoned datetime: 2025-01-01T12:00:00-06:00[America/Chicago]', t => {
   t.is(result.timeZoneId, 'America/Chicago');
   t.is(result.epochMilliseconds, Date.UTC(2025, 0, 1, 18, 0, 0));
 });
+
+// --- System rules: historical US war-time zone abbreviations ---
+
+test('zoned datetime: 1942-11-19 12:00:00.000 CWT', t => {
+  const result = parseZonedDateAndTime('1942-11-19 12:00:00.000 CWT');
+  t.true(result instanceof Temporal.ZonedDateTime);
+  t.is(result.timeZoneId, 'America/Chicago');
+  t.is(result.epochMilliseconds, Date.UTC(1942, 10, 19, 17, 0, 0));
+});
+
+test('zoned datetime: 1943-06-15 12:00:00.000 EWT', t => {
+  const result = parseZonedDateAndTime('1943-06-15 12:00:00.000 EWT');
+  t.true(result instanceof Temporal.ZonedDateTime);
+  t.is(result.timeZoneId, 'America/New_York');
+  t.is(result.epochMilliseconds, Date.UTC(1943, 5, 15, 16, 0, 0));
+});
+
+test('zoned datetime: 1944-07-01 12:00:00.000 MWT', t => {
+  const result = parseZonedDateAndTime('1944-07-01 12:00:00.000 MWT');
+  t.true(result instanceof Temporal.ZonedDateTime);
+  t.is(result.timeZoneId, 'America/Denver');
+  t.is(result.epochMilliseconds, Date.UTC(1944, 6, 1, 18, 0, 0));
+});
+
+test('zoned datetime: 1945-05-01 12:00:00.000 PWT', t => {
+  const result = parseZonedDateAndTime('1945-05-01 12:00:00.000 PWT');
+  t.true(result instanceof Temporal.ZonedDateTime);
+  t.is(result.timeZoneId, 'America/Los_Angeles');
+  t.is(result.epochMilliseconds, Date.UTC(1945, 4, 1, 19, 0, 0));
+});
+
+test('zoned datetime: 1943-06-15 12:00:00.000 CPT', t => {
+  const result = parseZonedDateAndTime('1943-06-15 12:00:00.000 CPT');
+  t.true(result instanceof Temporal.ZonedDateTime);
+  t.is(result.timeZoneId, 'America/Chicago');
+  t.is(result.epochMilliseconds, Date.UTC(1943, 5, 15, 17, 0, 0));
+});
+
+test('zoned datetime: 1943-06-15 12:00:00.000 EPT', t => {
+  const result = parseZonedDateAndTime('1943-06-15 12:00:00.000 EPT');
+  t.true(result instanceof Temporal.ZonedDateTime);
+  t.is(result.timeZoneId, 'America/New_York');
+  t.is(result.epochMilliseconds, Date.UTC(1943, 5, 15, 16, 0, 0));
+});
+
+test('zoned datetime: 1942-11-19 12:00:00.000 HWT', t => {
+  const result = parseZonedDateAndTime('1942-11-19 12:00:00.000 HWT');
+  t.true(result instanceof Temporal.ZonedDateTime);
+  t.is(result.timeZoneId, 'Pacific/Honolulu');
+  t.is(result.epochMilliseconds, Date.UTC(1942, 10, 19, 21, 30, 0));
+});
+
+test('zoned datetime: 1942-11-19 12:00:00.000 XYZ', t => {
+  const result = parseZonedDateAndTime('1942-11-19 12:00:00.000 XYZ');
+  t.falsy(result);
+});
