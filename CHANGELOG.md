@@ -1,5 +1,23 @@
 # Change Log
 
+## Unreleased
+
+- `parseZonedDateAndTime()` accepts a `local @ zone` separator.
+- A zoneless ISO date-time is interpreted in `timeZone`, not the machine zone.
+- Known abbreviations use IANA zone rules, including optional seconds and daylight/standard disambiguation.
+- A zone token on a shorthand or slash-date time (`y 08:36 CDT`, `1/1/2020 08:22:34.028 CST`) names the result's zone instead of being dropped. Unknown tokens return `null`.
+- `UT` joins the abbreviation map as UTC.
+- New `parseZonedDateAndTime()` options: `requireTimeZone` and `resultTimeZone`.
+- `requireTimeZone` is enforced up front on the full input, so the error message always names the whole input. `parseZonedTime()` honors it per rule; `parseZonedDate()` ignores it.
+- A time part with a numeric offset (`1/1/2020 08:22+05`) keeps the typed wall time and the offset instant.
+- A zoned stamp that cannot be parsed returns `null` instead of throwing.
+- A bad `timeZone` option throws for `Z` and numeric-offset input.
+- `requireTimeZone` accepts every zone the parser accepts, including `UT` and offsets such as `GMT+0`. `GMT+00` parses instead of returning `null`.
+- Space-separated times accept `±HH:MM` offsets.
+- A spaced meridiem (`3 pm`, `9 am`) parses as a time instead of a day of the month.
+- With `preferTime`, a `ZonedDateTime` `defaultDate` keeps its own zone unless the time names one.
+- Multi-segment and `Etc` IANA ids (`America/Argentina/Buenos_Aires`, `Etc/GMT+5`) parse after any date form and in `parseZonedTime()`.
+
 ## Release 1.0.19
 - Removes debugging code.
 - Fixes the test for "Y" when run on the first of the month.

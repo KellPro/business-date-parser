@@ -1,5 +1,10 @@
 import {parseDate, parseTime, parseDateAndTime, parseZonedDate, parseZonedTime, parseZonedDateAndTime} from '../index.js';
-import {Temporal} from '@js-temporal/polyfill';
+import {Temporal as TemporalPolyfill} from '@js-temporal/polyfill';
+
+// Match the library: use the runtime's native Temporal when it has one, and
+// fall back to the polyfill only when it does not. Asserting instanceof
+// against a different copy than the parser returns would always fail.
+const Temporal = globalThis.Temporal || TemporalPolyfill;
 
 import {createRequire} from 'module';
 
@@ -331,20 +336,27 @@ test('time: 12:42:49 PM', t => {
   expectTime(t, t.title, 12, 42, 49);
 });
 
+// The zone is honored, so the legacy Date is that wall time today in the named
+// zone, and may render different wall fields on this machine.
+function expectTimeInZone(t, input, timeZone, plainTime) {
+  const expected = Temporal.Now.plainDateISO(timeZone).toZonedDateTime({timeZone, plainTime});
+  t.is(parseTime(input).getTime(), expected.epochMilliseconds);
+}
+
 test('time: 08:22:34.028 CST', t => {
-  expectTime(t, t.title, 8, 22, 34, 28);
+  expectTimeInZone(t, '08:22:34.028 CST', 'America/Chicago', '08:22:34.028');
 });
 
 test('time: 08:00:00.000 PDT', t => {
-  expectTime(t, t.title, 8, 0, 0, 0);
+  expectTimeInZone(t, '08:00:00.000 PDT', 'America/Los_Angeles', '08:00:00');
 });
 
 test('time: 22:00:00.000 AST', t => {
-  expectTime(t, t.title, 22, 0, 0, 0);
+  expectTimeInZone(t, '22:00:00.000 AST', 'America/Halifax', '22:00:00');
 });
 
 test('time: 12:00:00.000 America/Chicago', t => {
-  expectTime(t, t.title, 12, 0, 0, 0);
+  expectTimeInZone(t, '12:00:00.000 America/Chicago', 'America/Chicago', '12:00:00');
 });
 
 test('time: 12:00:00.000 AM', t => {
@@ -352,7 +364,8 @@ test('time: 12:00:00.000 AM', t => {
 });
 
 test('time: 2:00 America/Chicago', t => {
-  expectTime(t, t.title, 14, 0, 0, 0);
+  // Business hours: 2 with no meridiem is 2 pm.
+  expectTimeInZone(t, '2:00 America/Chicago', 'America/Chicago', '14:00:00');
 });
 
 test('time: bad value', t => {
@@ -388,9 +401,9 @@ test('datetime: y', t => {
 });
 
 test('datetime: y 08:36:50.900 CDT', t => {
-  const now = new Date();
-  now.setDate(now.getDate() - 1);
-  expectDateAndTime(t, t.title, now.getFullYear(), now.getMonth() + 1, now.getDate(), 8, 36, 50, 900);
+  // The CDT zone is honored, so the legacy Date is the same instant as the
+  // zoned parse and may render different wall fields on this machine.
+  t.is(parseDateAndTime('y 08:36:50.900 CDT').getTime(), parseZonedDateAndTime('y 08:36:50.900 CDT').epochMilliseconds);
 });
 
 test('datetime: 1/1/2020 08:22:34.028 CST', t => {
@@ -450,8 +463,10 @@ test('datetime: Valid Date with Dashes but Preferring Time', t => {
 });
 
 test('datetime: Valid Time but Preferring Time', t => {
-  const now = new Date();
-  expectDateAndTime(t, '08:36:50.900 CDT', now.getFullYear(), now.getMonth() + 1, now.getDate(), 8, 36, 50, 900, {preferTime: true});
+  // The CDT zone is honored, so the legacy Date is the same instant as the
+  // zoned parse and may render different wall fields on this machine.
+  t.is(parseDateAndTime('08:36:50.900 CDT', {preferTime: true}).getTime(),
+       parseZonedDateAndTime('08:36:50.900 CDT', {preferTime: true}).epochMilliseconds);
 });
 
 test('datetime: Yesterday but Preferring Time', t => {
@@ -493,7 +508,8 @@ test('datetime: 3pm but preferring time', t => {
 });
 
 test('datetime: 2022-02-01 13:00:00.000 PDT', t => {
-  expectDateAndTimeISO(t, t.title, '2022-02-01T20:00:00.000Z');
+  // February is standard time in Los Angeles, so PDT names the -08:00 occurrence.
+  expectDateAndTimeISO(t, t.title, '2022-02-01T21:00:00.000Z');
 });
 
 test('datetime: 2022-02-01 12:00:00.000 Z', t => {
@@ -645,8 +661,10 @@ test('zoned datetime: Valid Date with Dashes but Preferring Time', t => {
 });
 
 test('zoned datetime: Valid Time but Preferring Time', t => {
-  const now = new Date();
-  expectZonedDateAndTime(t, '08:36:50.900 CDT', now.getFullYear(), now.getMonth() + 1, now.getDate(), 8, 36, 50, 900, {preferTime: true});
+  // With no defaultDate, the date is today in the time part's zone, which may
+  // differ from the machine's date.
+  const today = Temporal.Now.zonedDateTimeISO('America/Chicago');
+  expectZonedDateAndTime(t, '08:36:50.900 CDT', today.year, today.month, today.day, 8, 36, 50, 900, {preferTime: true});
 });
 
 test('zoned datetime: Yesterday but Preferring Time', t => {
@@ -668,6 +686,27 @@ test('zoned datetime: PostgreSQL ISO 8601 +0200', t => {
 test('zoned datetime: PostgreSQL ISO 8601 -0200', t => {
   const result = parseZonedDateAndTime('2016-02-01 11:19:16-0200', { timeZone: 'UTC' });
   t.is(result.epochMilliseconds, Date.UTC(2016, 1, 1, 13, 19, 16));
+});
+
+test('zoned datetime: space-separated offset with colon', t => {
+  const result = parseZonedDateAndTime('2016-02-01 11:19:16+00:00', {timeZone: 'UTC'});
+  t.is(result.epochMilliseconds, Date.UTC(2016, 1, 1, 11, 19, 16));
+});
+
+test('zoned datetime: space-separated offset with colon and space', t => {
+  const result = parseZonedDateAndTime('2016-02-01 11:19:16 +02:00', {timeZone: 'UTC'});
+  t.is(result.epochMilliseconds, Date.UTC(2016, 1, 1, 9, 19, 16));
+});
+
+test('zoned datetime: space-separated negative offset with colon', t => {
+  const result = parseZonedDateAndTime('2016-02-01 11:19:16-02:00', {timeZone: 'UTC'});
+  t.is(result.epochMilliseconds, Date.UTC(2016, 1, 1, 13, 19, 16));
+});
+
+test('zoned datetime: Date-parsed offsets still parse', t => {
+  t.is(parseZonedDateAndTime('2016-02-01 11:19:16+5', {timeZone: 'UTC'}).epochMilliseconds, Date.parse('2016-02-01 11:19:16+5'));
+  t.is(parseZonedDateAndTime('2016-02-01 11:19:16+530', {timeZone: 'UTC'}).epochMilliseconds, Date.parse('2016-02-01 11:19:16+530'));
+  t.is(parseZonedDateAndTime('2000-06-15 12:00:00 GMT+00', {timeZone: 'UTC'}).epochMilliseconds, Date.parse('2000-06-15 12:00:00 GMT+00'));
 });
 
 test('zoned datetime: 3am', t => {
@@ -715,9 +754,12 @@ test('zoned datetime: 2022-02-01T19:00:00.000Z', t => {
 });
 
 test('zoned datetime: 2022-03-28T16:11:37.5158301-05:00', t => {
-  const result = parseZonedDateAndTime('2022-03-28T16:11:37.5158301-05:00');
+  // The offset input is expressed in timeZone, so pin the zone for a
+  // machine-independent wall-time assertion.
+  const result = parseZonedDateAndTime('2022-03-28T16:11:37.5158301-05:00', {timeZone: 'America/Chicago'});
   t.truthy(result.epochMilliseconds > 0);
   t.is(result.hour, 16);
+  t.is(result.millisecond, 515);
 });
 
 test('zoned datetime: bad value', t => {
@@ -733,7 +775,7 @@ test('zoned datetime: bad value preferring time', t => {
 test('zoned datetime: with timeZone option', t => {
   const result = parseZonedDateAndTime('2024-04-26 14:30:00', { timeZone: 'America/New_York' });
   t.is(result.timeZoneId, 'America/New_York');
-  t.truthy(result.hour >= 14 && result.hour <= 15);
+  t.is(result.hour, 14);
   t.is(result.minute, 30);
 });
 
@@ -1089,4 +1131,460 @@ test('zoned datetime: 1942-11-19 12:00:00.000 HWT', t => {
 test('zoned datetime: 1942-11-19 12:00:00.000 XYZ', t => {
   const result = parseZonedDateAndTime('1942-11-19 12:00:00.000 XYZ');
   t.falsy(result);
+});
+
+// --- @ zone separator ---
+
+test('zoned datetime: 2000-01-01 00:00:00 @ America/Chicago', t => {
+  const result = parseZonedDateAndTime('2000-01-01 00:00:00 @ America/Chicago');
+  t.true(result instanceof Temporal.ZonedDateTime);
+  t.is(result.timeZoneId, 'America/Chicago');
+  t.is(result.year, 2000);
+  t.is(result.month, 1);
+  t.is(result.day, 1);
+  t.is(result.hour, 0);
+  t.is(result.minute, 0);
+  t.is(result.second, 0);
+});
+
+test('zoned datetime: 2000-01-01T00:00:00 @ America/Chicago', t => {
+  const result = parseZonedDateAndTime('2000-01-01T00:00:00 @ America/Chicago');
+  t.is(result.timeZoneId, 'America/Chicago');
+  t.is(result.hour, 0);
+});
+
+test('zoned datetime: 2000-01-01 00:00 @ America/Denver', t => {
+  const result = parseZonedDateAndTime('2000-01-01 00:00 @ America/Denver');
+  t.is(result.timeZoneId, 'America/Denver');
+  t.is(result.hour, 0);
+  t.is(result.minute, 0);
+});
+
+test('zoned datetime: 2000-01-01 12:00:00 @ CST', t => {
+  const result = parseZonedDateAndTime('2000-01-01 12:00:00 @ CST');
+  t.is(result.timeZoneId, 'America/Chicago');
+  t.is(result.offset, '-06:00');
+  t.is(result.hour, 12);
+});
+
+test('zoned datetime: 2000-01-01 00:00:00 @ Not/AZone', t => {
+  const result = parseZonedDateAndTime('2000-01-01 00:00:00 @ Not/AZone');
+  t.falsy(result);
+});
+
+test('zoned datetime: 2022-02-01 12:00:00.000 Z is unchanged by @ support', t => {
+  const result = parseZonedDateAndTime('2022-02-01 12:00:00.000 Z');
+  t.is(result.epochMilliseconds, Date.UTC(2022, 1, 1, 12, 0, 0));
+});
+
+// --- Zoneless ISO uses the timeZone option, not the machine zone ---
+
+test('zoned datetime: zoneless ISO matches date-only in timeZone', t => {
+  const options = {timeZone: 'America/Denver'};
+  const iso = parseZonedDateAndTime('2000-01-01T00:00:00', options);
+  const dateOnly = parseZonedDateAndTime('2000-01-01', options);
+  t.is(iso.timeZoneId, 'America/Denver');
+  t.is(iso.hour, 0);
+  t.is(iso.epochMilliseconds, dateOnly.epochMilliseconds);
+});
+
+// --- Abbreviation zone rules and DST disambiguation ---
+// These tests run against whichever Temporal the runtime provides (native or
+// polyfill 0.5.1). Both resolve ambiguous wall times without throwing so far.
+
+test('zoned datetime: 2000-02-02 01:01:01.123 CDT uses zone rules', t => {
+  const result = parseZonedDateAndTime('2000-02-02 01:01:01.123 CDT');
+  t.is(result.timeZoneId, 'America/Chicago');
+  t.is(result.offset, '-06:00');
+  t.is(result.hour, 1);
+  t.is(result.minute, 1);
+  t.is(result.second, 1);
+  t.is(result.millisecond, 123);
+});
+
+test('zoned datetime: 2026-11-01 01:30 CDT is the earlier occurrence', t => {
+  const result = parseZonedDateAndTime('2026-11-01 01:30 CDT');
+  t.is(result.timeZoneId, 'America/Chicago');
+  t.is(result.offset, '-05:00');
+  t.is(result.hour, 1);
+  t.is(result.minute, 30);
+});
+
+test('zoned datetime: 2026-11-01 01:30 CST is the later occurrence', t => {
+  const result = parseZonedDateAndTime('2026-11-01 01:30 CST');
+  t.is(result.timeZoneId, 'America/Chicago');
+  t.is(result.offset, '-06:00');
+  t.is(result.hour, 1);
+  t.is(result.minute, 30);
+});
+
+// --- Zone tokens on shorthand and slash dates are honored, not dropped ---
+
+test('zoned datetime: 1/1/2020 08:22:34.028 CST honors the zone', t => {
+  const result = parseZonedDateAndTime('1/1/2020 08:22:34.028 CST');
+  t.is(result.timeZoneId, 'America/Chicago');
+  t.is(result.epochMilliseconds, Date.UTC(2020, 0, 1, 14, 22, 34, 28));
+});
+
+test('zoned datetime: y 08:36 CDT is honored with requireTimeZone', t => {
+  const result = parseZonedDateAndTime('y 08:36 CDT', {requireTimeZone: true});
+  t.true(result instanceof Temporal.ZonedDateTime);
+  t.is(result.timeZoneId, 'America/Chicago');
+  t.is(result.hour, 8);
+  t.is(result.minute, 36);
+});
+
+test('zoned time: 08:36 XYZ returns null', t => {
+  t.falsy(parseZonedTime('08:36 XYZ'));
+});
+
+test('zoned datetime: 2000-06-15 12:00:00 UT is UTC', t => {
+  const result = parseZonedDateAndTime('2000-06-15 12:00:00 UT');
+  t.is(result.timeZoneId, 'UTC');
+  t.is(result.epochMilliseconds, Date.UTC(2000, 5, 15, 12, 0, 0));
+});
+
+// --- resultTimeZone projects the result; omit keeps the input zone ---
+
+test('zoned datetime: resultTimeZone converts a ZonedDateTime and keeps the instant', t => {
+  const input = Temporal.ZonedDateTime.from('2025-01-01T12:00:00-06:00[America/Chicago]');
+  const result = parseZonedDateAndTime(input, {resultTimeZone: 'UTC'});
+  t.is(result.epochMilliseconds, input.epochMilliseconds);
+  t.is(result.timeZoneId, 'UTC');
+});
+
+test('zoned datetime: omitted resultTimeZone keeps a ZonedDateTime zone', t => {
+  const input = Temporal.ZonedDateTime.from('2025-01-01T12:00:00-06:00[America/Chicago]');
+  const result = parseZonedDateAndTime(input);
+  t.is(result.timeZoneId, 'America/Chicago');
+  t.is(result.epochMilliseconds, input.epochMilliseconds);
+});
+
+test('zoned datetime: resultTimeZone converts an offset string and keeps the instant', t => {
+  const result = parseZonedDateAndTime('2022-02-01T19:00:00.000Z', {resultTimeZone: 'America/Chicago'});
+  t.is(result.epochMilliseconds, Date.UTC(2022, 1, 1, 19, 0, 0));
+  t.is(result.timeZoneId, 'America/Chicago');
+});
+
+test('zoned datetime: omitted resultTimeZone expresses Z and offsets in timeZone', t => {
+  const zulu = parseZonedDateAndTime('2022-02-01T19:00:00.000Z', {timeZone: 'America/Chicago'});
+  t.is(zulu.timeZoneId, 'America/Chicago');
+  t.is(zulu.epochMilliseconds, Date.UTC(2022, 1, 1, 19, 0, 0));
+  const offset = parseZonedDateAndTime('2016-02-01 11:19:16+00:00', {timeZone: 'America/Chicago'});
+  t.is(offset.timeZoneId, 'America/Chicago');
+  t.is(offset.epochMilliseconds, Date.UTC(2016, 1, 1, 11, 19, 16));
+});
+
+test('zoned datetime: omitted resultTimeZone keeps a named zone', t => {
+  const abbreviation = parseZonedDateAndTime('2025-01-01 12:00:00 CST', {timeZone: 'UTC'});
+  t.is(abbreviation.timeZoneId, 'America/Chicago');
+  const bracket = parseZonedDateAndTime('2025-01-01T12:00:00[America/Chicago]', {timeZone: 'UTC'});
+  t.is(bracket.timeZoneId, 'America/Chicago');
+});
+
+test('zoned datetime: invalid resultTimeZone throws', t => {
+  const error = t.throws(() => {
+    parseZonedDateAndTime('2022-02-01T19:00:00.000Z', {resultTimeZone: 'Not/AZone'});
+  });
+  t.true(error instanceof RangeError);
+});
+
+test('zoned datetime: invalid timeZone throws for zoned input', t => {
+  const inputs = [
+    '2022-02-01T19:00:00.000Z',
+    '2022-02-01T19:00:00',
+    '2016-02-01 11:19:16+00',
+    '2016-02-01 11:19:16+00:00',
+    '2025-01-01',
+    '3',
+    '9:30',
+    Temporal.PlainDateTime.from('2000-01-01T00:00:00')
+  ];
+  for (const input of inputs) {
+    const error = t.throws(() => {
+      parseZonedDateAndTime(input, {timeZone: 'Not/AZone'});
+    });
+    t.true(error instanceof RangeError);
+  }
+});
+
+test('zoned datetime: unparseable offset stamp returns null', t => {
+  t.falsy(parseZonedDateAndTime('2022-02-01T99:00:00Z', {timeZone: 'Not/AZone'}));
+  t.falsy(parseZonedDateAndTime('2016-02-01 99:19:16+00', {timeZone: 'UTC'}));
+  t.falsy(parseZonedDateAndTime('2016-02-01 99:19:16+00:00', {timeZone: 'Not/AZone'}));
+});
+
+// --- requireTimeZone rejects input that names no zone ---
+
+test('zoned datetime: requireTimeZone throws on shorthand and zoneless ISO', t => {
+  for (const input of ['3', 'c', '12:00 pm', '2000-01-01T00:00:00']) {
+    const error = t.throws(() => {
+      parseZonedDateAndTime(input, {requireTimeZone: true});
+    }, {instanceOf: Error});
+    t.is(error.message, `Date/time missing time zone: ${input}`);
+  }
+});
+
+test('zoned datetime: requireTimeZone throws on time-shaped and date-only input', t => {
+  const error = t.throws(() => {
+    parseZonedDateAndTime('9a', {requireTimeZone: true});
+  }, {instanceOf: Error});
+  t.is(error.message, 'Date/time missing time zone: 9a');
+
+  // The central check runs on the full input, so the message names all of it.
+  const shorthandError = t.throws(() => {
+    parseZonedDateAndTime('y 08:36', {requireTimeZone: true});
+  }, {instanceOf: Error});
+  t.is(shorthandError.message, 'Date/time missing time zone: y 08:36');
+
+  const dateOnlyError = t.throws(() => {
+    parseZonedDateAndTime('1/1/2020', {requireTimeZone: true});
+  }, {instanceOf: Error});
+  t.is(dateOnlyError.message, 'Date/time missing time zone: 1/1/2020');
+});
+
+test('zoned time: requireTimeZone throws on zoneless times', t => {
+  for (const input of ['9:30', '9:30pm', '-20', 'c']) {
+    t.throws(() => {
+      parseZonedTime(input, {requireTimeZone: true});
+    }, {instanceOf: Error});
+  }
+  // A named zone parses.
+  t.true(parseZonedTime('9:30pm CST', {requireTimeZone: true}) instanceof Temporal.ZonedDateTime);
+});
+
+test('zoned datetime: y +20 still combines through the space split', t => {
+  const result = parseZonedDateAndTime('y +20');
+  const yesterday = Temporal.Now.zonedDateTimeISO().subtract({days: 1});
+  t.true(result instanceof Temporal.ZonedDateTime);
+  t.is(result.year, yesterday.year);
+  t.is(result.month, yesterday.month);
+  t.is(result.day, yesterday.day);
+});
+
+test('zoned datetime: 1/1/2020 08:22:34.028+0200 keeps the offset instant', t => {
+  const result = parseZonedDateAndTime('1/1/2020 08:22:34.028+0200');
+  t.is(result.epochMilliseconds, Date.UTC(2020, 0, 1, 6, 22, 34, 28));
+});
+
+test('zoned datetime: requireTimeZone throws on PlainDateTime', t => {
+  const input = Temporal.PlainDateTime.from('2000-01-01T00:00:00');
+  const error = t.throws(() => {
+    parseZonedDateAndTime(input, {requireTimeZone: true});
+  }, {instanceOf: Error});
+  t.is(error.message, `Date/time missing time zone: ${input}`);
+});
+
+test('zoned datetime: requireTimeZone allows zones the parser accepts', t => {
+  const universalTime = '2000-06-15 12:00:00 UT';
+  t.is(parseZonedDateAndTime(universalTime, {requireTimeZone: true}).epochMilliseconds, Date.parse(universalTime));
+  t.is(parseZonedDateAndTime('2000-06-15 12:00:00 ut', {requireTimeZone: true}).epochMilliseconds, Date.parse(universalTime));
+  const greenwichOffset = '2000-06-15 12:00:00 GMT+0';
+  t.is(parseZonedDateAndTime(greenwichOffset, {requireTimeZone: true}).epochMilliseconds, Date.parse(greenwichOffset));
+  t.is(parseZonedDateAndTime('2016-02-01 11:19:16+00:00', {requireTimeZone: true, timeZone: 'UTC'}).epochMilliseconds, Date.UTC(2016, 1, 1, 11, 19, 16));
+});
+
+test('zoned datetime: requireTimeZone allows absolute and zoned input', t => {
+  const zoned = Temporal.ZonedDateTime.from('2025-01-01T12:00:00-06:00[America/Chicago]');
+  t.is(parseZonedDateAndTime(zoned, {requireTimeZone: true}).timeZoneId, 'America/Chicago');
+  t.true(parseZonedDateAndTime(new Date('2022-02-01T19:00:00.000Z'), {requireTimeZone: true}) instanceof Temporal.ZonedDateTime);
+  t.true(parseZonedDateAndTime(0, {requireTimeZone: true}) instanceof Temporal.ZonedDateTime);
+  t.true(parseZonedDateAndTime(Temporal.Instant.from('2022-02-01T19:00:00.000Z'), {requireTimeZone: true}) instanceof Temporal.ZonedDateTime);
+  t.is(parseZonedDateAndTime('2022-02-01T19:00:00.000Z', {requireTimeZone: true}).epochMilliseconds, Date.UTC(2022, 1, 1, 19, 0, 0));
+  t.is(parseZonedDateAndTime('2025-01-01 12:00:00.000 CST', {requireTimeZone: true}).timeZoneId, 'America/Chicago');
+});
+
+test('zoned datetime: default requireTimeZone still parses shorthand', t => {
+  t.true(parseZonedDateAndTime('c') instanceof Temporal.ZonedDateTime);
+  const now = Temporal.Now.zonedDateTimeISO();
+  const day = parseZonedDateAndTime('3');
+  t.is(day.hour, 0);
+  t.is(day.day, 3);
+  t.is(day.year, now.year);
+  const threePm = parseZonedDateAndTime('3pm');
+  t.is(threePm.hour, 15);
+});
+
+test('zoned datetime: PlainDateTime attaches timeZone', t => {
+  const input = Temporal.PlainDateTime.from('2000-01-01T00:00:00');
+  const result = parseZonedDateAndTime(input, {timeZone: 'America/Denver'});
+  t.is(result.timeZoneId, 'America/Denver');
+  t.is(result.hour, 0);
+  t.is(result.epochMilliseconds, parseZonedDateAndTime('2000-01-01', {timeZone: 'America/Denver'}).epochMilliseconds);
+});
+
+// --- Unparseable strings return null and do not throw ---
+
+test('zoned datetime: malformed bracket returns null', t => {
+  const result = parseZonedDateAndTime('2000-01-01T00:00:00[Not/AZone]');
+  t.falsy(result);
+});
+
+test('zoned datetime: 2000-01-01.5 returns null', t => {
+  const result = parseZonedDateAndTime('2000-01-01.5');
+  t.falsy(result);
+});
+
+test('zoned datetime: meridiem times keep their hour regardless of machine zone', t => {
+  const options = {timeZone: 'America/Chicago'};
+  const am = parseZonedDateAndTime('2025-01-01 11:00 am', options);
+  t.is(am.timeZoneId, 'America/Chicago');
+  t.is(am.hour, 11);
+  t.is(am.epochMilliseconds, Date.UTC(2025, 0, 1, 17, 0, 0));
+
+  const pm = parseZonedDateAndTime('2025-01-01 12:00 pm', options);
+  t.is(pm.hour, 12);
+  t.is(pm.epochMilliseconds, Date.UTC(2025, 0, 1, 18, 0, 0));
+
+  const pmSeconds = parseZonedDateAndTime('2025-01-01 12:00:00 PM', options);
+  t.is(pmSeconds.hour, 12);
+
+  const shortMeridiem = parseZonedDateAndTime('2025-01-01 08:00 a', options);
+  t.is(shortMeridiem.hour, 8);
+});
+
+test('zoned datetime: space-separated Z parses without seconds in any machine zone', t => {
+  const result = parseZonedDateAndTime('2022-02-01 12:00 Z', {timeZone: 'America/Chicago'});
+  t.is(result.epochMilliseconds, Date.UTC(2022, 1, 1, 12, 0, 0));
+  const offset = parseZonedDateAndTime('2022-02-01 12:00 +02:00', {timeZone: 'UTC'});
+  t.is(offset.epochMilliseconds, Date.UTC(2022, 1, 1, 10, 0, 0));
+});
+
+test('zoned datetime: unparseable time part returns null instead of dropping it', t => {
+  t.falsy(parseZonedDateAndTime('1/1/20 10:00 XYZ'));
+  t.falsy(parseZonedDateAndTime('1/1/20 10:00 XYZ', {requireTimeZone: true}));
+  t.falsy(parseZonedDateAndTime('1/1/2020 10:00 am Not/AZone'));
+});
+
+test('zoned datetime: requireTimeZone rejects shapes the machine zone would otherwise swallow', t => {
+  const error = t.throws(() => {
+    parseZonedDateAndTime('2020/01/01 10:00:00 AM', {requireTimeZone: true});
+  }, {instanceOf: Error});
+  t.is(error.message, 'Date/time missing time zone: 2020/01/01 10:00:00 AM');
+});
+
+test('zoned datetime: slash dates honor abbreviation disambiguation on a repeated hour', t => {
+  const cst = parseZonedDateAndTime('11/1/2026 01:30 CST', {timeZone: 'America/Chicago'});
+  t.is(cst.offset, '-06:00');
+  const cdt = parseZonedDateAndTime('11/1/2026 01:30 CDT', {timeZone: 'America/Chicago'});
+  t.is(cdt.offset, '-05:00');
+});
+
+test('zoned datetime: 1945-09-30 01:30 CPT is the war-offset occurrence', t => {
+  const result = parseZonedDateAndTime('1945-09-30 01:30 CPT');
+  t.is(result.timeZoneId, 'America/Chicago');
+  t.is(result.offset, '-05:00');
+});
+
+test('zoned datetime: offset time parts express in timeZone', t => {
+  const result = parseZonedDateAndTime('y 08:22:34+0200', {timeZone: 'America/Chicago'});
+  t.is(result.timeZoneId, 'America/Chicago');
+  t.is(result.hour, 1);
+  t.is(result.minute, 22);
+  t.is(result.second, 34);
+});
+
+test('zoned datetime: slash dates keep an IANA zone', t => {
+  const full = parseZonedDateAndTime('1/1/2020 10:00:00 America/Chicago', {timeZone: 'UTC'});
+  t.is(full.timeZoneId, 'America/Chicago');
+  t.is(full.epochMilliseconds, Date.UTC(2020, 0, 1, 16, 0, 0));
+  const short = parseZonedDateAndTime('1/1/20 10:00 America/Denver', {timeZone: 'UTC'});
+  t.is(short.timeZoneId, 'America/Denver');
+  t.is(short.epochMilliseconds, Date.UTC(2020, 0, 1, 17, 0, 0));
+});
+
+test('zoned datetime: requireTimeZone does not read date dashes as an offset', t => {
+  for (const input of ['2025-01-15', '1-15', '-3', '+5']) {
+    const error = t.throws(() => {
+      parseZonedDateAndTime(input, {requireTimeZone: true});
+    }, {instanceOf: Error});
+    t.is(error.message, `Date/time missing time zone: ${input}`);
+  }
+});
+
+test('zoned datetime: requireTimeZone does not read a month name as an abbreviation', t => {
+  const error = t.throws(() => {
+    parseZonedDateAndTime('5 January', {requireTimeZone: true});
+  }, {instanceOf: Error});
+  t.is(error.message, 'Date/time missing time zone: 5 January');
+});
+
+test('zoned datetime: unknown zone abbreviation on a full date returns null', t => {
+  t.falsy(parseZonedDateAndTime('2025-01-01 10:00 XYZ', {timeZone: 'UTC'}));
+  t.falsy(parseZonedDateAndTime('2025-01-01 10:00:00 BST', {timeZone: 'UTC'}));
+});
+
+test('zoned datetime: a spaced meridiem is a time, not a day', t => {
+  const options = {timeZone: 'America/Chicago'};
+  const today = Temporal.Now.plainDateISO('America/Chicago');
+  for (const [input, hour] of [['3 pm', 15], ['9 am', 9], ['12 a', 0], ['1230 pm', 12]]) {
+    const result = parseZonedDateAndTime(input, options);
+    t.is(result.day, today.day, input);
+    t.is(result.hour, hour, input);
+  }
+  t.is(parseZonedDateAndTime('3 pm CST', options).hour, 15);
+});
+
+test('zoned datetime: preferTime with a zoned defaultDate keeps the date zone', t => {
+  const defaultDate = Temporal.ZonedDateTime.from('1988-04-26T00:00:00[America/Denver]');
+  const result = parseZonedDateAndTime('9', {timeZone: 'UTC', preferTime: true, defaultDate});
+  t.is(result.timeZoneId, 'America/Denver');
+  t.is(result.toPlainDateTime().toString(), '1988-04-26T09:00:00');
+});
+
+test('zoned datetime: multi-segment and Etc IANA ids parse in every position', t => {
+  const options = {timeZone: 'UTC'};
+  for (const input of ['2025-01-01 10:00 America/Argentina/Buenos_Aires', '1/1/2025 10:00 America/Argentina/Buenos_Aires']) {
+    const result = parseZonedDateAndTime(input, options);
+    t.is(result.timeZoneId, 'America/Argentina/Buenos_Aires', input);
+    t.is(result.epochMilliseconds, Date.UTC(2025, 0, 1, 13, 0, 0), input);
+  }
+  for (const input of ['2025-01-01 10:00 Etc/GMT+5', '1/1/2025 10:00 Etc/GMT+5']) {
+    const result = parseZonedDateAndTime(input, options);
+    t.is(result.timeZoneId, 'Etc/GMT+5', input);
+    t.is(result.epochMilliseconds, Date.UTC(2025, 0, 1, 15, 0, 0), input);
+  }
+  t.is(parseZonedTime('10:00 Etc/GMT+5', options).timeZoneId, 'Etc/GMT+5');
+});
+
+// requireTimeZone decides up front whether the input names a zone, using the
+// same zone-token pieces as the parse rules. This pins the two together: an
+// input that names a zone must never throw, and one that does not must throw
+// with the full input in the message, whatever rule would have parsed it.
+test('zoned datetime: requireTimeZone agrees with the parse rules', t => {
+  const options = {timeZone: 'America/Chicago'};
+  const namesZone = [
+    '2022-02-01T19:00:00.000Z',
+    '2022-02-01T19:00:00+05:30',
+    '2025-01-01T12:00:00[America/Chicago]',
+    '2000-01-01 00:00:00 @ America/Chicago',
+    '2000-01-01T00:00 @ CST',
+    '2025-01-01 12:00:00 CST',
+    '2026-11-01 01:30 cdt',
+    '2025-01-01 10:00 America/Argentina/Buenos_Aires',
+    '2016-02-01 11:19:16+00',
+    '2016-02-01 11:19:16 -02:00',
+    '2022-02-01 12:00 Z',
+    '2000-06-15 12:00:00 GMT+0',
+    '1/1/2020 08:22:34.028 CST',
+    '1/1/2020 08:22:34.028+0200',
+    '1/1/2025 10:00 Etc/GMT+5',
+    'y 08:36 CDT',
+    '9:30pm CST',
+    '3 pm CST'
+  ];
+  for (const input of namesZone) {
+    t.true(parseZonedDateAndTime(input, {...options, requireTimeZone: true}) instanceof Temporal.ZonedDateTime, input);
+  }
+  const namesNoZone = [
+    'c', '3', '3pm', '3 pm', '12:00 pm', '9a', '-3', '+5', '1-15', '1/1/2020', '2025-01-15',
+    'y 08:36', 'y +20', '2000-01-01T00:00:00', '2025-01-01 10:00', '2020/01/01 10:00:00 AM'
+  ];
+  for (const input of namesNoZone) {
+    t.true(parseZonedDateAndTime(input, options) instanceof Temporal.ZonedDateTime, input);
+    const error = t.throws(() => {
+      parseZonedDateAndTime(input, {...options, requireTimeZone: true});
+    }, {instanceOf: Error}, input);
+    t.is(error.message, `Date/time missing time zone: ${input}`, input);
+  }
 });
